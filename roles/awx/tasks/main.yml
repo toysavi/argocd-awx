@@ -1,0 +1,107 @@
+---
+# =============================================================================
+# Role: awx — AWX Operator + instance, Traefik IngressRoute for HTTPS
+# =============================================================================
+
+- name: "awx | Add AWX Operator Helm repo"
+  kubernetes.core.helm_repository:
+    name: awx-operator
+    repo_url: https://ansible.github.io/awx-operator/
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "awx | Install AWX Operator"
+  kubernetes.core.helm:
+    name: awx-operator
+    chart_ref: awx-operator/awx-operator
+    chart_version: "{{ awx_operator_version }}"
+    release_namespace: "{{ awx_namespace }}"
+    create_namespace: true
+    values:
+      AWX:
+        enabled: false
+    wait: true
+    timeout: "5m0s"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "awx | Create admin password Secret"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ awx_instance_name }}-admin-password"
+        namespace: "{{ awx_namespace }}"
+      stringData:
+        password: "{{ awx_admin_password }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "awx | Create PostgreSQL Secret"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: "{{ awx_instance_name }}-postgres-configuration"
+        namespace: "{{ awx_namespace }}"
+      stringData:
+        host:     "{{ awx_instance_name }}-postgres-15"
+        port:     "5432"
+        database: "awx"
+        username: "awx"
+        password: "{{ awx_db_password }}"
+        type:     "managed"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "awx | Apply AWX CR (ingress_type: none — we use IngressRoute)"
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'awx-instance.yaml.j2') }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "awx | Create Certificate resource for AWX"
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'awx-certificate.yaml.j2') }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "awx | Wait for AWX pods to be ready (5-10 min first install)"
+  ansible.builtin.shell: |
+    kubectl wait pod \
+      -l app.kubernetes.io/name={{ awx_instance_name }} \
+      -n {{ awx_namespace }} \
+      --for=condition=Ready \
+      --timeout=600s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  retries: 3
+  delay: 30
+  register: awx_ready
+  until: awx_ready.rc == 0
+
+- name: "awx | Wait for cert to be ready"
+  ansible.builtin.shell: |
+    kubectl wait certificate/awx-tls \
+      -n {{ awx_namespace }} \
+      --for=condition=Ready \
+      --timeout=120s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  retries: 5
+  delay: 15
+  register: awx_cert_wait
+  until: awx_cert_wait.rc == 0
+
+- name: "awx | Apply Traefik IngressRoute"
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'awx-ingressroute.yaml.j2') }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml

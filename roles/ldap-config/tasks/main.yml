@@ -1,0 +1,63 @@
+---
+# =============================================================================
+# Role: ldap-config — Configure AWX LDAP via REST API
+# =============================================================================
+
+- name: "ldap | Wait for AWX API to be available"
+  ansible.builtin.uri:
+    url: "https://{{ awx_fqdn }}/api/v2/ping/"
+    method: GET
+    validate_certs: false
+    status_code: 200
+  register: awx_ping
+  retries: 20
+  delay: 15
+  until: awx_ping.status == 200
+
+- name: "ldap | Set AWX LDAP configuration"
+  ansible.builtin.uri:
+    url: "https://{{ awx_fqdn }}/api/v2/settings/ldap/"
+    method: PATCH
+    user: "{{ awx_admin_user }}"
+    password: "{{ awx_admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    body_format: json
+    status_code: [200, 204]
+    body:
+      AUTH_LDAP_SERVER_URI: "{{ ldap_server_uri }}"
+      AUTH_LDAP_BIND_DN: "{{ ldap_bind_dn }}"
+      AUTH_LDAP_BIND_PASSWORD: "{{ ldap_bind_password }}"
+      AUTH_LDAP_START_TLS: "{{ ldap_start_tls }}"
+      AUTH_LDAP_USER_SEARCH:
+        - "{{ ldap_user_search_dn }}"
+        - "SCOPE_SUBTREE"
+        - "(uid=%(user)s)"
+      AUTH_LDAP_GROUP_SEARCH:
+        - "{{ ldap_group_search_dn }}"
+        - "SCOPE_SUBTREE"
+        - "(objectClass=groupOfNames)"
+      AUTH_LDAP_GROUP_TYPE: "{{ ldap_group_type }}"
+      AUTH_LDAP_GROUP_TYPE_PARAMS: "{{ ldap_group_type_params }}"
+      AUTH_LDAP_REQUIRE_GROUP: "{{ ldap_require_group }}"
+      AUTH_LDAP_USER_ATTR_MAP: "{{ ldap_user_attr_map }}"
+      AUTH_LDAP_USER_FLAGS_BY_GROUP:
+        is_superuser:
+          - "{{ ldap_superuser_group }}"
+        is_system_auditor:
+          - "{{ ldap_auditor_group }}"
+
+- name: "ldap | Verify LDAP settings applied"
+  ansible.builtin.uri:
+    url: "https://{{ awx_fqdn }}/api/v2/settings/ldap/"
+    method: GET
+    user: "{{ awx_admin_user }}"
+    password: "{{ awx_admin_password }}"
+    force_basic_auth: true
+    validate_certs: false
+    status_code: 200
+  register: ldap_check
+
+- name: "ldap | Show LDAP server URI in use"
+  ansible.builtin.debug:
+    msg: "AWX LDAP configured → {{ ldap_check.json.AUTH_LDAP_SERVER_URI }}"

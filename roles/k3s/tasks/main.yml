@@ -1,0 +1,126 @@
+---
+# =============================================================================
+# Role: k3s — Install k3s (Traefik built-in, no extra ingress controller)
+# =============================================================================
+
+- name: "k3s | Install dependencies"
+  ansible.builtin.apt:
+    name: [curl, open-iscsi, nfs-common, python3-pip]
+    state: present
+    update_cache: true
+
+- name: "k3s | Install Python k8s libraries"
+  ansible.builtin.pip:
+    name: [kubernetes, openshift]
+    extra_args: "--break-system-packages"
+    state: present
+
+- name: "k3s | Check if k3s already installed"
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary
+
+- name: "k3s | Install k3s with built-in Traefik"
+  ansible.builtin.shell: |
+    curl -sfL https://get.k3s.io | \
+      INSTALL_K3S_VERSION="{{ k3s_version }}" \
+      INSTALL_K3S_EXEC="server \
+        --cluster-cidr {{ k3s_cluster_cidr }} \
+        --service-cidr {{ k3s_service_cidr }} \
+        --write-kubeconfig-mode 644" \
+      sh -
+  when: not k3s_binary.stat.exists
+
+- name: "k3s | Wait for k3s API to be ready"
+  ansible.builtin.wait_for:
+    host: "{{ k3s_master_ip }}"
+    port: 6443
+    timeout: 120
+
+- name: "k3s | Set KUBECONFIG for ansible user"
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: "/home/{{ ansible_user }}/.kube/config"
+    remote_src: true
+    owner: "{{ ansible_user }}"
+    mode: '0600'
+
+- name: "k3s | Patch kubeconfig server address"
+  ansible.builtin.replace:
+    path: "/home/{{ ansible_user }}/.kube/config"
+    regexp: 'https://127.0.0.1:6443'
+    replace: "https://{{ k3s_master_ip }}:6443"
+
+- name: "k3s | Wait for Traefik to be ready"
+  ansible.builtin.shell: |
+    kubectl rollout status deploy/traefik -n kube-system --timeout=120s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  retries: 5
+  delay: 10
+  register: traefik_ready
+  until: traefik_ready.rc == 0
+
+# Patch Traefik to ensure 443 hostPort is bound on the node
+# k3s Traefik already does this by default, but we make it explicit
+- name: "k3s | Patch Traefik HelmChartConfig for websecure hostPort"
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: helm.cattle.io/v1
+      kind: HelmChartConfig
+      metadata:
+        name: traefik
+        namespace: kube-system
+      spec:
+        valuesContent: |
+          ports:
+            web:
+              port: 8000
+              hostPort: 80
+              expose:
+                default: true
+            websecure:
+              port: 8443
+              hostPort: 443
+              expose:
+                default: true
+          logs:
+            general:
+              level: INFO
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "k3s | Create namespaces"
+  kubernetes.core.k8s:
+    name: "{{ item }}"
+    api_version: v1
+    kind: Namespace
+    state: present
+  loop: "{{ k8s_namespaces }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "k3s | Install cert-manager"
+  ansible.builtin.shell: |
+    kubectl apply -f \
+      https://github.com/cert-manager/cert-manager/releases/latest/download/cert-manager.yaml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: "k3s | Wait for cert-manager webhook ready"
+  ansible.builtin.shell: |
+    kubectl rollout status deploy/cert-manager-webhook -n cert-manager --timeout=120s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  retries: 6
+  delay: 15
+  register: cm_ready
+  until: cm_ready.rc == 0
+
+- name: "k3s | Apply ClusterIssuer"
+  kubernetes.core.k8s:
+    state: present
+    definition: "{{ lookup('template', 'cluster-issuer.yaml.j2') }}"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml

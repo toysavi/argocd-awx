@@ -1,0 +1,47 @@
+---
+# Traefik IngressRoute — HTTPS 443 → awx-prod-service:80
+# AWX operator creates the Service named {{ awx_instance_name }}-service
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: awx-https
+  namespace: {{ awx_namespace }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`{{ awx_fqdn }}`)
+      kind: Rule
+      services:
+        - name: {{ awx_instance_name }}-service
+          port: 80
+  tls:
+    secretName: awx-tls
+---
+# HTTP → HTTPS redirect
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: awx-http-redirect
+  namespace: {{ awx_namespace }}
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`{{ awx_fqdn }}`)
+      kind: Rule
+      middlewares:
+        - name: awx-https-redirect
+      services:
+        - name: {{ awx_instance_name }}-service
+          port: 80
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: awx-https-redirect
+  namespace: {{ awx_namespace }}
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
