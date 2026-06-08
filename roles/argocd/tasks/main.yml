@@ -1,6 +1,126 @@
----
+# ---
+# # ============================================================
+# # Phase 2: Deploy ArgoCD with custom SSL via Traefik on port 443
+# # ============================================================
+
+# - name: Create ArgoCD namespace
+#   ansible.builtin.shell: |
+#     kubectl create namespace {{ argocd_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+#   environment:
+#     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+#   changed_when: false
+
+# # --- Upload custom TLS certificate ---
+# - name: Read SSL certificate from control node
+#   ansible.builtin.slurp:
+#     src: "{{ ssl_cert_path }}"
+#   register: ssl_cert_content
+#   delegate_to: localhost
+
+# - name: Read SSL key from control node
+#   ansible.builtin.slurp:
+#     src: "{{ ssl_key_path }}"
+#   register: ssl_key_content
+#   delegate_to: localhost
+
+# - name: Create ArgoCD TLS secret
+#   ansible.builtin.shell: |
+#     kubectl create secret tls argocd-tls-secret \
+#       --cert=<(echo "{{ ssl_cert_content.content | b64decode }}") \
+#       --key=<(echo "{{ ssl_key_content.content | b64decode }}") \
+#       --namespace={{ argocd_namespace }} \
+#       --dry-run=client -o yaml | kubectl apply -f -
+#   environment:
+#     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+#   changed_when: false
+
+# # --- Hash admin password for ArgoCD ---
+# - name: Hash ArgoCD admin password (bcrypt)
+#   ansible.builtin.shell: |
+#     python3 -c "
+#     import bcrypt, base64
+#     pw = '{{ argocd_admin_password }}'.encode()
+#     hashed = bcrypt.hashpw(pw, bcrypt.gensalt(rounds=10))
+#     print(hashed.decode())
+#     "
+#   register: argocd_hashed_password
+#   changed_when: false
+#   no_log: true
+
+# - name: Get current timestamp for password change
+#   ansible.builtin.command: date -u +%Y-%m-%dT%H:%M:%SZ
+#   register: argocd_password_timestamp
+#   changed_when: false
+
+# # --- Deploy ArgoCD via Helm ---
+# - name: Add ArgoCD Helm repo
+#   ansible.builtin.shell: |
+#     helm repo add argo {{ argocd_helm_repo }}
+#     helm repo update
+#   environment:
+#     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+#   changed_when: false
+
+# # - name: Deploy ArgoCD via Helm
+# #   ansible.builtin.shell: |
+# #     helm upgrade --install argocd argo/argo-cd \
+# #       --namespace {{ argocd_namespace }} \
+# #       {{ '--version ' + argocd_chart_version if argocd_chart_version != '' else '' }} \
+# #       --set server.extraArgs="{--insecure}" \
+# #       --set configs.secret.argocdServerAdminPassword="{{ argocd_hashed_password.stdout }}" \
+# #       --set configs.secret.argocdServerAdminPasswordMtime="{{ argocd_password_timestamp.stdout }}" \
+# #       --set server.service.type=ClusterIP \
+# #       --set server.ingressGrpc.enabled=false \
+# #       --kubeconfig /etc/rancher/k3s/k3s.yaml \
+# #       --wait --timeout 300s
+# - name: Deploy ArgoCD via Helm
+#   ansible.builtin.shell: |
+#     helm upgrade --install argocd argo/argo-cd \
+#       --namespace {{ argocd_namespace }} \
+#       {{ '--version ' + argocd_chart_version if argocd_chart_version != '' else '' }} \
+#       --skip-crds \
+#       --set server.extraArgs="{--insecure}" \
+#       --set configs.secret.argocdServerAdminPassword="{{ argocd_hashed_password.stdout }}" \
+#       --set configs.secret.argocdServerAdminPasswordMtime="{{ argocd_password_timestamp.stdout }}" \
+#       --set server.service.type=ClusterIP \
+#       --set server.ingressGrpc.enabled=false \
+#       --kubeconfig /etc/rancher/k3s/k3s.yaml \
+#       --wait --timeout 300s
+      
+#   environment:
+#     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+#   register: argocd_deploy
+#   changed_when: true
+
+# - name: Wait for ArgoCD server to be ready
+#   ansible.builtin.shell: |
+#     kubectl rollout status deployment/argocd-server \
+#       -n {{ argocd_namespace }} --timeout=300s
+#   environment:
+#     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+#   changed_when: false
+
+# # --- Traefik IngressRoute ---
+# - name: Apply ArgoCD Traefik IngressRoute
+#   ansible.builtin.shell: |
+#     kubectl apply -f - <<'EOF'
+#     {{ lookup('template', 'ingressroute.yml.j2') }}
+#     EOF
+#   environment:
+#     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+#   changed_when: false
+
+# - name: Print ArgoCD access info
+#   ansible.builtin.debug:
+#     msg:
+#       - "ArgoCD URL  : https://{{ argocd_fqdn }}"
+#       - "Username    : admin"
+#       - "Password    : (as set in vars.yml)"
+
+
 # ============================================================
-# Phase 2: Deploy ArgoCD with custom SSL via Traefik on port 443
+# Phase 2: Deploy ArgoCD with custom SSL via Traefik on 443
+# FIXED: stable password handling (no Helm bcrypt injection)
 # ============================================================
 
 - name: Create ArgoCD namespace
@@ -10,7 +130,10 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-# --- Upload custom TLS certificate ---
+
+# -----------------------------
+# TLS CERTIFICATE
+# -----------------------------
 - name: Read SSL certificate from control node
   ansible.builtin.slurp:
     src: "{{ ssl_cert_path }}"
@@ -34,45 +157,22 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-# --- Hash admin password for ArgoCD ---
-- name: Hash ArgoCD admin password (bcrypt)
-  ansible.builtin.shell: |
-    python3 -c "
-    import bcrypt, base64
-    pw = '{{ argocd_admin_password }}'.encode()
-    hashed = bcrypt.hashpw(pw, bcrypt.gensalt(rounds=10))
-    print(hashed.decode())
-    "
-  register: argocd_hashed_password
-  changed_when: false
-  no_log: true
 
-- name: Get current timestamp for password change
-  ansible.builtin.command: date -u +%Y-%m-%dT%H:%M:%SZ
-  register: argocd_password_timestamp
-  changed_when: false
-
-# --- Deploy ArgoCD via Helm ---
+# -----------------------------
+# HELM REPO
+# -----------------------------
 - name: Add ArgoCD Helm repo
   ansible.builtin.shell: |
-    helm repo add argo {{ argocd_helm_repo }}
+    helm repo add argo {{ argocd_helm_repo }} || true
     helm repo update
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-# - name: Deploy ArgoCD via Helm
-#   ansible.builtin.shell: |
-#     helm upgrade --install argocd argo/argo-cd \
-#       --namespace {{ argocd_namespace }} \
-#       {{ '--version ' + argocd_chart_version if argocd_chart_version != '' else '' }} \
-#       --set server.extraArgs="{--insecure}" \
-#       --set configs.secret.argocdServerAdminPassword="{{ argocd_hashed_password.stdout }}" \
-#       --set configs.secret.argocdServerAdminPasswordMtime="{{ argocd_password_timestamp.stdout }}" \
-#       --set server.service.type=ClusterIP \
-#       --set server.ingressGrpc.enabled=false \
-#       --kubeconfig /etc/rancher/k3s/k3s.yaml \
-#       --wait --timeout 300s
+
+# -----------------------------
+# HELM DEPLOY (NO PASSWORD HERE)
+# -----------------------------
 - name: Deploy ArgoCD via Helm
   ansible.builtin.shell: |
     helm upgrade --install argocd argo/argo-cd \
@@ -80,19 +180,18 @@
       {{ '--version ' + argocd_chart_version if argocd_chart_version != '' else '' }} \
       --skip-crds \
       --set server.extraArgs="{--insecure}" \
-      --set configs.secret.argocdServerAdminPassword="{{ argocd_hashed_password.stdout }}" \
-      --set configs.secret.argocdServerAdminPasswordMtime="{{ argocd_password_timestamp.stdout }}" \
       --set server.service.type=ClusterIP \
       --set server.ingressGrpc.enabled=false \
       --kubeconfig /etc/rancher/k3s/k3s.yaml \
       --wait --timeout 300s
-      
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  register: argocd_deploy
-  changed_when: true
 
-- name: Wait for ArgoCD server to be ready
+
+# -----------------------------
+# WAIT SERVER
+# -----------------------------
+- name: Wait for ArgoCD server
   ansible.builtin.shell: |
     kubectl rollout status deployment/argocd-server \
       -n {{ argocd_namespace }} --timeout=300s
@@ -100,7 +199,51 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-# --- Traefik IngressRoute ---
+
+# -----------------------------
+# SET ADMIN PASSWORD (WORKING METHOD)
+# -----------------------------
+- name: Generate bcrypt password hash
+  ansible.builtin.shell: |
+    htpasswd -bnBC 10 "" "{{ argocd_admin_password }}" | tr -d ':\n'
+  register: argocd_password_hash
+  changed_when: false
+  no_log: true
+
+- name: Patch ArgoCD admin password
+  ansible.builtin.shell: |
+    kubectl patch secret argocd-secret -n {{ argocd_namespace }} \
+      -p '{"stringData":{
+        "admin.password":"{{ argocd_password_hash.stdout }}",
+        "admin.passwordMtime":"{{ lookup("pipe", "date -u +%FT%TZ") }}"
+      }}'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  no_log: true
+
+
+# -----------------------------
+# RESTART ARGOCD
+# -----------------------------
+- name: Restart ArgoCD server
+  ansible.builtin.shell: |
+    kubectl rollout restart deployment/argocd-server \
+      -n {{ argocd_namespace }}
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+
+- name: Wait for restart
+  ansible.builtin.shell: |
+    kubectl rollout status deployment/argocd-server \
+      -n {{ argocd_namespace }} --timeout=300s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+
+
+# -----------------------------
+# TRAEFIK INGRESS
+# -----------------------------
 - name: Apply ArgoCD Traefik IngressRoute
   ansible.builtin.shell: |
     kubectl apply -f - <<'EOF'
@@ -110,9 +253,13 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
+
+# -----------------------------
+# OUTPUT INFO
+# -----------------------------
 - name: Print ArgoCD access info
   ansible.builtin.debug:
     msg:
       - "ArgoCD URL  : https://{{ argocd_fqdn }}"
       - "Username    : admin"
-      - "Password    : (as set in vars.yml)"
+      # - "Password    : {{ argocd_admin_password }}"
