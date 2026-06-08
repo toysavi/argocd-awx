@@ -61,11 +61,24 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
+# - name: Deploy ArgoCD via Helm
+#   ansible.builtin.shell: |
+#     helm upgrade --install argocd argo/argo-cd \
+#       --namespace {{ argocd_namespace }} \
+#       {{ '--version ' + argocd_chart_version if argocd_chart_version != '' else '' }} \
+#       --set server.extraArgs="{--insecure}" \
+#       --set configs.secret.argocdServerAdminPassword="{{ argocd_hashed_password.stdout }}" \
+#       --set configs.secret.argocdServerAdminPasswordMtime="{{ argocd_password_timestamp.stdout }}" \
+#       --set server.service.type=ClusterIP \
+#       --set server.ingressGrpc.enabled=false \
+#       --kubeconfig /etc/rancher/k3s/k3s.yaml \
+#       --wait --timeout 300s
 - name: Deploy ArgoCD via Helm
   ansible.builtin.shell: |
     helm upgrade --install argocd argo/argo-cd \
       --namespace {{ argocd_namespace }} \
       {{ '--version ' + argocd_chart_version if argocd_chart_version != '' else '' }} \
+      --skip-crds \
       --set server.extraArgs="{--insecure}" \
       --set configs.secret.argocdServerAdminPassword="{{ argocd_hashed_password.stdout }}" \
       --set configs.secret.argocdServerAdminPasswordMtime="{{ argocd_password_timestamp.stdout }}" \
@@ -73,6 +86,7 @@
       --set server.ingressGrpc.enabled=false \
       --kubeconfig /etc/rancher/k3s/k3s.yaml \
       --wait --timeout 300s
+      
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   register: argocd_deploy
