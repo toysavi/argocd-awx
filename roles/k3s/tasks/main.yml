@@ -1,0 +1,202 @@
+---
+# ============================================================
+# Phase 1: Install k3s — detects OS (Ubuntu, RHEL, Oracle Linux)
+# ============================================================
+
+- name: Gather OS facts
+  ansible.builtin.setup:
+    gather_subset:
+      - distribution
+      - distribution_version
+      - os_family
+
+- name: Show detected OS
+  ansible.builtin.debug:
+    msg: "Detected OS: {{ ansible_distribution }} {{ ansible_distribution_version }} ({{ ansible_os_family }})"
+
+# --- Prerequisites by OS family ---
+
+- name: Install prerequisites on Debian/Ubuntu
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - apt-transport-https
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - open-iscsi
+      - nfs-common
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+- name: Install prerequisites on RHEL/Oracle Linux/CentOS
+  ansible.builtin.dnf:
+    name:
+      - curl
+      - wget
+      - ca-certificates
+      - gnupg2
+      - iscsi-initiator-utils
+      - nfs-utils
+      - container-selinux
+    state: present
+    update_cache: true
+  when: ansible_os_family == "RedHat"
+
+- name: Enable and start iscsid (RHEL family)
+  ansible.builtin.systemd:
+    name: iscsid
+    enabled: true
+    state: started
+  when: ansible_os_family == "RedHat"
+
+# --- SELinux permissive for RHEL/Oracle ---
+- name: Set SELinux to permissive (RHEL/Oracle)
+  ansible.posix.selinux:
+    policy: targeted
+    state: permissive
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true
+
+# --- Firewall ---
+- name: Open required ports on firewalld (RHEL/Oracle)
+  ansible.posix.firewalld:
+    port: "{{ item }}"
+    permanent: true
+    state: enabled
+    immediate: true
+  loop:
+    - "6443/tcp"   # k3s API
+    - "80/tcp"     # Traefik HTTP
+    - "443/tcp"    # Traefik HTTPS
+    - "8472/udp"   # Flannel VXLAN
+    - "10250/tcp"  # kubelet
+  when: ansible_os_family == "RedHat"
+  ignore_errors: true
+
+- name: Open required ports on ufw (Ubuntu)
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+  loop:
+    - { port: "6443", proto: "tcp" }
+    - { port: "80",   proto: "tcp" }
+    - { port: "443",  proto: "tcp" }
+    - { port: "8472", proto: "udp" }
+    - { port: "10250", proto: "tcp" }
+  when: ansible_os_family == "Debian"
+  ignore_errors: true
+
+# --- k3s Install ---
+- name: Check if k3s is already installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/k3s
+  register: k3s_binary
+
+- name: Download k3s install script
+  ansible.builtin.get_url:
+    url: https://get.k3s.io
+    dest: /tmp/k3s-install.sh
+    mode: '0755'
+  when: not k3s_binary.stat.exists
+
+- name: Install k3s (single node — disabling default Traefik, re-enable with config)
+  ansible.builtin.shell: |
+    INSTALL_K3S_VERSION="{{ k3s_version if k3s_version != 'stable' else '' }}" \
+    INSTALL_K3S_EXEC="server \
+      --disable=traefik \
+      --data-dir={{ k3s_data_dir }} \
+      --node-ip={{ node_ip }} \
+      --tls-san={{ node_ip }}" \
+    /tmp/k3s-install.sh
+  environment:
+    INSTALL_K3S_SKIP_DOWNLOAD: "false"
+  when: not k3s_binary.stat.exists
+  notify: restart k3s
+
+- name: Ensure k3s service is started and enabled
+  ansible.builtin.systemd:
+    name: k3s
+    enabled: true
+    state: started
+
+- name: Wait for k3s API to be ready
+  ansible.builtin.wait_for:
+    port: 6443
+    host: "{{ node_ip }}"
+    delay: 10
+    timeout: 120
+
+- name: Create .kube directory for root
+  ansible.builtin.file:
+    path: /root/.kube
+    state: directory
+    mode: '0700'
+
+- name: Copy kubeconfig to ~/.kube/config
+  ansible.builtin.copy:
+    src: /etc/rancher/k3s/k3s.yaml
+    dest: /root/.kube/config
+    remote_src: true
+    mode: '0600'
+
+- name: Install Helm
+  ansible.builtin.shell: |
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  args:
+    creates: /usr/local/bin/helm
+
+- name: Install Traefik via Helm (with Kubernetes provider)
+  ansible.builtin.shell: |
+    helm repo add traefik https://helm.traefik.io/traefik
+    helm repo update
+    helm upgrade --install traefik traefik/traefik \
+      --namespace kube-system \
+      --set service.type=LoadBalancer \
+      --set ports.web.redirectTo.port=websecure \
+      --set ports.websecure.port=443 \
+      --set ports.websecure.expose.default=true \
+      --set "service.spec.externalIPs={{{ node_ip }}}" \
+      --kubeconfig /etc/rancher/k3s/k3s.yaml \
+      --wait --timeout 120s
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: traefik_install
+  changed_when: "'deployed' in traefik_install.stdout or 'upgraded' in traefik_install.stdout"
+
+- name: Verify nodes are ready
+  ansible.builtin.shell: |
+    kubectl get nodes --no-headers | grep -v "Ready"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: not_ready
+  retries: 10
+  delay: 15
+  until: not_ready.stdout == ""
+  changed_when: false
+
+- name: Create local storage directory
+  ansible.builtin.file:
+    path: "{{ local_storage_path }}"
+    state: directory
+    mode: '0755'
+
+- name: Deploy local storage StorageClass
+  ansible.builtin.shell: |
+    kubectl apply -f - <<'EOF'
+    apiVersion: storage.k8s.io/v1
+    kind: StorageClass
+    metadata:
+      name: local-storage
+      annotations:
+        storageclass.kubernetes.io/is-default-class: "true"
+    provisioner: rancher.io/local-path
+    reclaimPolicy: Retain
+    volumeBindingMode: WaitForFirstConsumer
+    EOF
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false

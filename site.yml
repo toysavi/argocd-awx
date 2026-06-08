@@ -1,0 +1,14 @@
+---
+# =============================================================
+# Master playbook — runs all 3 phases in order
+# Usage: ansible-playbook -i inventory/hosts.ini site.yml
+# =============================================================
+- name: Full Stack Deploy — k3s + ArgoCD + AWX
+  hosts: k3s_nodes
+  gather_facts: true
+  become: true
+
+  roles:
+    - role: k3s         # Phase 1: Install k3s + Helm + Traefik
+    - role: argocd      # Phase 2: Deploy ArgoCD with custom SSL
+    - role: awx         # Phase 3: Deploy AWX via ArgoCD Helm app

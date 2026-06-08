@@ -1,0 +1,8 @@
+---
+# Run Phase 1 only: ansible-playbook -i inventory/hosts.ini playbooks/phase1_k3s.yml
+- name: Phase 1 — Install k3s + Traefik
+  hosts: k3s_nodes
+  gather_facts: true
+  become: true
+  roles:
+    - k3s

@@ -1,0 +1,36 @@
+---
+# =============================================================
+# SINGLE VARIABLE FILE — update everything here
+# =============================================================
+
+# --- Node ---
+node_ip: "192.168.1.100"           # Your server IP
+
+# --- Storage ---
+local_storage_path: "/data/storage" # Local path for PV storage
+
+# --- SSL Certificates ---
+# Place your cert/key files on the control node, set paths here
+ssl_cert_path: "/etc/ssl/certs/tls.crt"   # path on CONTROL node
+ssl_key_path:  "/etc/ssl/private/tls.key"  # path on CONTROL node
+
+# --- ArgoCD ---
+argocd_fqdn:           "argocd.example.com"
+argocd_namespace:      "argocd"
+argocd_helm_repo:      "https://argoproj.github.io/argo-helm"
+argocd_chart_version:  ""          # "" = latest, or pin e.g. "7.7.0"
+argocd_admin_password: "Ch@ngeMe123!"   # plain-text; hashed at deploy time
+
+# --- AWX ---
+awx_fqdn:              "awx.example.com"
+awx_namespace:         "awx"
+awx_helm_repo:         "https://ansible.github.io/awx-operator/"
+awx_chart_version:     ""          # "" = latest, or pin e.g. "2.19.1"
+awx_admin_password:    "Ch@ngeMe456!"
+
+# --- k3s ---
+k3s_version:           "stable"    # or e.g. "v1.31.0+k3s1"
+k3s_data_dir:          "/var/lib/rancher/k3s"
+
+# --- Traefik (built-in with k3s) ---
+traefik_dashboard_enabled: false

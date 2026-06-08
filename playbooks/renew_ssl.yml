@@ -1,0 +1,88 @@
+---
+# =============================================================
+# SSL Certificate Renewal Playbook
+# Usage: Update ssl_cert_path / ssl_key_path in vars.yml with
+#        new cert paths, then run:
+#   ansible-playbook -i inventory/hosts.ini playbooks/renew_ssl.yml
+#
+#   Renew ArgoCD only:  --tags argocd
+#   Renew AWX only:     --tags awx
+# =============================================================
+- name: Renew TLS certificates for ArgoCD and AWX
+  hosts: k3s_nodes
+  gather_facts: false
+  become: true
+
+  tasks:
+
+    - name: Read SSL certificate
+      ansible.builtin.slurp:
+        src: "{{ ssl_cert_path }}"
+      register: ssl_cert_content
+      delegate_to: localhost
+
+    - name: Read SSL key
+      ansible.builtin.slurp:
+        src: "{{ ssl_key_path }}"
+      register: ssl_key_content
+      delegate_to: localhost
+
+    - name: "[ArgoCD] Renew TLS secret"
+      ansible.builtin.shell: |
+        kubectl create secret tls argocd-tls-secret \
+          --cert=<(echo "{{ ssl_cert_content.content | b64decode }}") \
+          --key=<(echo "{{ ssl_key_content.content | b64decode }}") \
+          --namespace={{ argocd_namespace }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+      tags: argocd
+
+    - name: "[ArgoCD] Restart ArgoCD server to pick up new cert"
+      ansible.builtin.shell: |
+        kubectl rollout restart deployment/argocd-server -n {{ argocd_namespace }}
+        kubectl rollout status deployment/argocd-server -n {{ argocd_namespace }} --timeout=120s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      tags: argocd
+
+    - name: "[AWX] Renew TLS secret"
+      ansible.builtin.shell: |
+        kubectl create secret tls awx-tls-secret \
+          --cert=<(echo "{{ ssl_cert_content.content | b64decode }}") \
+          --key=<(echo "{{ ssl_key_content.content | b64decode }}") \
+          --namespace={{ awx_namespace }} \
+          --dry-run=client -o yaml | kubectl apply -f -
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+      tags: awx
+
+    - name: "[AWX] Restart AWX web pod to pick up new cert"
+      ansible.builtin.shell: |
+        kubectl rollout restart deployment/awx-web -n {{ awx_namespace }}
+        kubectl rollout status deployment/awx-web -n {{ awx_namespace }} --timeout=180s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      tags: awx
+
+    - name: Confirm cert expiry dates
+      ansible.builtin.shell: |
+        echo "=== ArgoCD ==="
+        kubectl get secret argocd-tls-secret -n {{ argocd_namespace }} \
+          -o jsonpath='{.data.tls\.crt}' | base64 -d | \
+          openssl x509 -noout -dates
+        echo ""
+        echo "=== AWX ==="
+        kubectl get secret awx-tls-secret -n {{ awx_namespace }} \
+          -o jsonpath='{.data.tls\.crt}' | base64 -d | \
+          openssl x509 -noout -dates
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: cert_expiry
+      changed_when: false
+
+    - name: Show cert expiry
+      ansible.builtin.debug:
+        var: cert_expiry.stdout_lines

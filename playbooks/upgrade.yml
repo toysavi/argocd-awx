@@ -1,0 +1,113 @@
+---
+# =============================================================
+# Upgrade Playbook — bump ArgoCD or AWX chart version
+# Usage:
+#   Update argocd_chart_version / awx_chart_version in vars.yml
+#   then run: ansible-playbook -i inventory/hosts.ini playbooks/upgrade.yml
+#
+#   Upgrade ArgoCD only:
+#     ansible-playbook -i inventory/hosts.ini playbooks/upgrade.yml --tags argocd
+#
+#   Upgrade AWX only:
+#     ansible-playbook -i inventory/hosts.ini playbooks/upgrade.yml --tags awx
+# =============================================================
+- name: Upgrade ArgoCD and/or AWX
+  hosts: k3s_nodes
+  gather_facts: false
+  become: true
+
+  tasks:
+
+    # ---- ArgoCD Upgrade ----
+    - name: "[ArgoCD] Update Helm repo"
+      ansible.builtin.shell: |
+        helm repo update
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+      tags: argocd
+
+    - name: "[ArgoCD] Helm upgrade"
+      ansible.builtin.shell: |
+        helm upgrade argocd argo/argo-cd \
+          --namespace {{ argocd_namespace }} \
+          {{ '--version ' + argocd_chart_version if argocd_chart_version != '' else '' }} \
+          --reuse-values \
+          --kubeconfig /etc/rancher/k3s/k3s.yaml \
+          --wait --timeout 300s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      tags: argocd
+
+    - name: "[ArgoCD] Show current version"
+      ansible.builtin.shell: |
+        helm list -n {{ argocd_namespace }} --kubeconfig /etc/rancher/k3s/k3s.yaml
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: argocd_version
+      changed_when: false
+      tags: argocd
+
+    - name: "[ArgoCD] Version output"
+      ansible.builtin.debug:
+        var: argocd_version.stdout_lines
+      tags: argocd
+
+    # ---- AWX Upgrade ----
+    # AWX is managed by ArgoCD Application — just patch the targetRevision
+    - name: "[AWX] Patch ArgoCD Application with new chart version"
+      ansible.builtin.shell: |
+        kubectl patch application awx-operator \
+          -n {{ argocd_namespace }} \
+          --type=merge \
+          -p '{"spec":{"source":{"targetRevision":"{{ awx_chart_version if awx_chart_version != "" else "*" }}"}}}'
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      tags: awx
+
+    - name: "[AWX] Trigger ArgoCD hard refresh and sync"
+      ansible.builtin.shell: |
+        # Refresh
+        kubectl annotate application awx-operator \
+          -n {{ argocd_namespace }} \
+          argocd.argoproj.io/refresh=hard --overwrite
+        # Wait a moment then sync
+        sleep 10
+        kubectl patch application awx-operator \
+          -n {{ argocd_namespace }} \
+          --type=merge \
+          -p '{"operation":{"sync":{"revision":"{{ awx_chart_version if awx_chart_version != "" else "" }}"}}}'
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      tags: awx
+
+    - name: "[AWX] Wait for sync to complete"
+      ansible.builtin.shell: |
+        kubectl wait application/awx-operator \
+          -n {{ argocd_namespace }} \
+          --for=jsonpath='{.status.sync.status}'=Synced \
+          --timeout=300s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      retries: 5
+      delay: 30
+      register: awx_sync
+      until: awx_sync.rc == 0
+      changed_when: false
+      tags: awx
+
+    - name: "[AWX] Show current operator version"
+      ansible.builtin.shell: |
+        kubectl get application awx-operator \
+          -n {{ argocd_namespace }} \
+          -o jsonpath='{.status.summary.images}' | tr ',' '\n'
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: awx_images
+      changed_when: false
+      tags: awx
+
+    - name: "[AWX] Image output"
+      ansible.builtin.debug:
+        var: awx_images.stdout_lines
+      tags: awx

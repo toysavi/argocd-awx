@@ -1,0 +1,8 @@
+---
+# Run Phase 2 only: ansible-playbook -i inventory/hosts.ini playbooks/phase2_argocd.yml
+- name: Phase 2 — Deploy ArgoCD
+  hosts: k3s_nodes
+  gather_facts: true
+  become: true
+  roles:
+    - argocd

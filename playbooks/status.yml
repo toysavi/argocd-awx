@@ -1,0 +1,110 @@
+---
+# =============================================================
+# Health Check Playbook
+# Usage: ansible-playbook -i inventory/hosts.ini playbooks/status.yml
+# =============================================================
+- name: Cluster and Application Health Check
+  hosts: k3s_nodes
+  gather_facts: false
+  become: true
+
+  tasks:
+
+    - name: k3s Node status
+      ansible.builtin.shell: kubectl get nodes -o wide
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: nodes
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ nodes.stdout_lines }}"
+
+    - name: Traefik pods
+      ansible.builtin.shell: kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: traefik_pods
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ traefik_pods.stdout_lines }}"
+
+    - name: ArgoCD pods
+      ansible.builtin.shell: kubectl get pods -n {{ argocd_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: argocd_pods
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ argocd_pods.stdout_lines }}"
+
+    - name: ArgoCD Applications sync status
+      ansible.builtin.shell: |
+        kubectl get applications -n {{ argocd_namespace }} \
+          -o custom-columns="NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: apps_status
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ apps_status.stdout_lines }}"
+
+    - name: AWX pods
+      ansible.builtin.shell: kubectl get pods -n {{ awx_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: awx_pods
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ awx_pods.stdout_lines }}"
+
+    - name: IngressRoutes
+      ansible.builtin.shell: |
+        kubectl get ingressroute -A
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: ingress_routes
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ ingress_routes.stdout_lines }}"
+
+    - name: TLS certificate expiry — ArgoCD
+      ansible.builtin.shell: |
+        kubectl get secret argocd-tls-secret -n {{ argocd_namespace }} \
+          -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -dates
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: argocd_cert
+      changed_when: false
+      ignore_errors: true
+
+    - ansible.builtin.debug:
+        msg: "{{ argocd_cert.stdout_lines }}"
+
+    - name: TLS certificate expiry — AWX
+      ansible.builtin.shell: |
+        kubectl get secret awx-tls-secret -n {{ awx_namespace }} \
+          -o jsonpath='{.data.tls\.crt}' | base64 -d | openssl x509 -noout -dates
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: awx_cert
+      changed_when: false
+      ignore_errors: true
+
+    - ansible.builtin.debug:
+        msg: "{{ awx_cert.stdout_lines }}"
+
+    - name: Helm releases summary
+      ansible.builtin.shell: helm list -A --kubeconfig /etc/rancher/k3s/k3s.yaml
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: helm_releases
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ helm_releases.stdout_lines }}"
