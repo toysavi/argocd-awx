@@ -81,6 +81,9 @@ k3s-node ansible_host=192.168.1.100 ansible_user=root
 ### 3. Run full deploy
 
 ```bash
+# Install package
+chmod +x build.sh && bash build.sh
+
 # All 3 phases at once
 ansible-playbook -i inventory/hosts.ini site.yml
 
