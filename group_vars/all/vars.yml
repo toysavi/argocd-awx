@@ -24,9 +24,9 @@ argocd_admin_password: "Ch@ngeMe123!"   # plain-text; hashed at deploy time
 # --- AWX ---
 awx_fqdn:              "awx.example.com"
 awx_namespace:         "awx"
-awx_helm_repo:         "https://ansible.github.io/awx-operator/"
-awx_repo_url:  "https://github.com/ansible/awx-operator.git"
-awx_repo_path: "deploy/helm"
+# awx_helm_repo:         "https://ansible.github.io/awx-operator/"
+awx_repo_url:          "https://github.com/your-repo/argocd-awx.git"
+awx_repo_path:         "awx"
 awx_chart_version:     ""          # "" = latest, or pin e.g. "2.19.1"
 awx_admin_password:    "Ch@ngeMe456!"
 
