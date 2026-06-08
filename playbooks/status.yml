@@ -4,7 +4,7 @@
 # Usage: ansible-playbook -i inventory/hosts.ini playbooks/status.yml
 # =============================================================
 - name: Cluster and Application Health Check
-  hosts: k3s_nodes
+  hosts: localhost
   gather_facts: false
   vars_files:
     - ../group_vars/all/vars.yml

@@ -12,7 +12,7 @@
 #     ansible-playbook -i inventory/hosts.ini playbooks/upgrade.yml --tags awx
 # =============================================================
 - name: Upgrade ArgoCD and/or AWX
-  hosts: k3s_nodes
+  hosts: localhost
   gather_facts: false
   vars_files:
     - ../group_vars/all/vars.yml

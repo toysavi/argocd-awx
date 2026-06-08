@@ -1,7 +1,7 @@
 ---
 # Run Phase 3 only: ansible-playbook -i inventory/hosts.ini playbooks/phase3_awx.yml
 - name: Phase 3 — Deploy AWX via ArgoCD
-  hosts: k3s_nodes
+  hosts: localhost
   gather_facts: true
   vars_files:
     - ../group_vars/all/vars.yml
