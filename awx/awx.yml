@@ -6,4 +6,4 @@ metadata:
 spec:
   service_type: nodeport
   ingress_type: none
-  hostname: awx.example.com
+  hostname: {{ awx_fqdn }}
