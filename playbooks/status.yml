@@ -6,6 +6,8 @@
 - name: Cluster and Application Health Check
   hosts: k3s_nodes
   gather_facts: false
+  vars_files:
+    - ../group_vars/all/vars.yml
   become: true
 
   tasks:

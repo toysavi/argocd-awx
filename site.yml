@@ -8,6 +8,9 @@
   gather_facts: true
   become: true
 
+  vars_files:
+    - group_vars/all/vars.yml
+
   roles:
     - role: k3s         # Phase 1: Install k3s + Helm + Traefik
     - role: argocd      # Phase 2: Deploy ArgoCD with custom SSL

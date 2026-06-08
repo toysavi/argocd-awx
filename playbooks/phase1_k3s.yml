@@ -3,6 +3,8 @@
 - name: Phase 1 — Install k3s + Traefik
   hosts: k3s_nodes
   gather_facts: true
+  vars_files:
+    - ../group_vars/all/vars.yml
   become: true
   roles:
     - k3s
