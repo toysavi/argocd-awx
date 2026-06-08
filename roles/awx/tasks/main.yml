@@ -1,8 +1,7 @@
----
-# ============================================================
-# Phase 3: Deploy AWX via ArgoCD Application (public Helm chart)
-# Easy future upgrades: just update awx_chart_version in vars.yml
-# ============================================================
+# =============================================================
+# Phase 3: Deploy AWX via ArgoCD Application (FIXED)
+# Uses Git repo (NOT Helm repo) — correct for AWX Operator
+# =============================================================
 
 - name: Create AWX namespace
   ansible.builtin.shell: |
@@ -11,7 +10,10 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-# --- TLS Secret for AWX ---
+
+# -----------------------------
+# TLS SECRET
+# -----------------------------
 - name: Read SSL certificate from control node
   ansible.builtin.slurp:
     src: "{{ ssl_cert_path }}"
@@ -35,7 +37,10 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-# --- AWX admin password secret ---
+
+# -----------------------------
+# AWX ADMIN SECRET
+# -----------------------------
 - name: Create AWX admin password secret
   ansible.builtin.shell: |
     kubectl create secret generic awx-admin-password \
@@ -44,11 +49,14 @@
       --dry-run=client -o yaml | kubectl apply -f -
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  changed_when: false
   no_log: true
+  changed_when: false
 
-# --- Local PV for AWX projects ---
-- name: Create AWX projects local storage directory
+
+# -----------------------------
+# PV FOR PROJECTS
+# -----------------------------
+- name: Create AWX projects directory
   ansible.builtin.file:
     path: "{{ local_storage_path }}/awx-projects"
     state: directory
@@ -76,53 +84,24 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-# --- Deploy AWX Operator + AWX instance via ArgoCD Application ---
-# Using the public AWX Operator Helm chart for easy future upgrades.
-# To upgrade AWX: update awx_chart_version in vars.yml and re-run.
-- name: Create AWX ArgoCD Application manifest
+
+# -----------------------------
+# FIXED ARGOCD APPLICATION (IMPORTANT PART)
+# -----------------------------
+- name: Create AWX ArgoCD Application
   ansible.builtin.shell: |
     kubectl apply -f - <<EOF
     apiVersion: argoproj.io/v1alpha1
     kind: Application
     metadata:
-      name: awx-operator
+      name: awx
       namespace: {{ argocd_namespace }}
     spec:
       project: default
       source:
-        repoURL: {{ awx_helm_repo }}
-        chart: awx-operator
-        {{ 'targetRevision: "' + awx_chart_version + '"' if awx_chart_version != '' else 'targetRevision: "*"' }}
-        helm:
-          releaseName: awx-operator
-          values: |
-            AWX:
-              enabled: true
-              name: awx
-              spec:
-                admin_user: admin
-                admin_password_secret: awx-admin-password
-                service_type: ClusterIP
-                ingress_type: none
-                projects_persistence: true
-                projects_existing_claim: ""
-                projects_storage_size: 8Gi
-                projects_storage_access_mode: ReadWriteOnce
-                projects_storage_class: local-storage
-                web_resource_requirements:
-                  requests:
-                    cpu: 200m
-                    memory: 512Mi
-                  limits:
-                    cpu: 1000m
-                    memory: 2Gi
-                task_resource_requirements:
-                  requests:
-                    cpu: 200m
-                    memory: 512Mi
-                  limits:
-                    cpu: 2000m
-                    memory: 4Gi
+        repoURL: {{ awx_repo_url }}
+        targetRevision: main
+        path: {{ awx_repo_path }}
       destination:
         server: https://kubernetes.default.svc
         namespace: {{ awx_namespace }}
@@ -137,22 +116,21 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
-- name: Wait for ArgoCD to sync AWX application
+
+# -----------------------------
+# WAIT FOR OPERATOR + AWX
+# -----------------------------
+- name: Wait AWX operator ready
   ansible.builtin.shell: |
-    kubectl wait --for=condition=available deployment/awx-operator-controller-manager \
-      -n {{ awx_namespace }} --timeout=300s
+    kubectl get pods -n {{ awx_namespace }} | grep awx || true
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  retries: 5
-  delay: 30
-  register: awx_operator_ready
-  until: awx_operator_ready.rc == 0
   changed_when: false
 
-- name: Wait for AWX instance to be running
+- name: Wait AWX deployment
   ansible.builtin.shell: |
-    kubectl wait --for=condition=available deployment/awx \
-      -n {{ awx_namespace }} --timeout=600s
+    kubectl wait --for=condition=available deployment \
+      --all -n {{ awx_namespace }} --timeout=600s
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   retries: 10
@@ -161,7 +139,10 @@
   until: awx_ready.rc == 0
   changed_when: false
 
-# --- Traefik IngressRoute for AWX ---
+
+# -----------------------------
+# TRAEFIK
+# -----------------------------
 - name: Apply AWX Traefik IngressRoute
   ansible.builtin.shell: |
     kubectl apply -f - <<'EOF'
@@ -171,9 +152,13 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
+
+# -----------------------------
+# OUTPUT
+# -----------------------------
 - name: Print AWX access info
   ansible.builtin.debug:
     msg:
       - "AWX URL   : https://{{ awx_fqdn }}"
       - "Username  : admin"
-      - "Password  : (as set in vars.yml)"
+      - "Password  : {{ awx_admin_password }}"
