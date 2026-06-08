@@ -1,0 +1,24 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: argocd
+  namespace: argocd
+spec:
+  ingressClassName: traefik
+
+  tls:
+  - hosts:
+    - argocd-awx.phillipbank.com.kh
+    secretName: argocd-tls
+
+  rules:
+  - host: argocd-awx.phillipbank.com.kh
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: argocd-server
+            port:
+              number: 80
