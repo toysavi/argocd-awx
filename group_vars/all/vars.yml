@@ -27,6 +27,10 @@ awx_fqdn:               "awx.example.com"
 awx_namespace:          "awx"
 awx_admin_password:     "Ch@ngeMe456!"
 
+# --- AWX Instance ---
+awx_instance_name:     "awx-uat"        # k8s resource name (no spaces, lowercase)
+awx_instance_title:    "AWX UAT"        # display name shown in AWX web UI
+
 # AWX source mode — choose ONE:
 # ---------------------------------------------------------------
 # MODE A: Helm (default, easiest upgrades — just change version)

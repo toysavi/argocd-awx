@@ -2,15 +2,18 @@
 apiVersion: awx.ansible.com/v1beta1
 kind: AWX
 metadata:
-  name: awx-uat                    # ← change to awx-prod for production
-  namespace: awx
+  name: {{ awx_instance_name }}
+  namespace: {{ awx_namespace }}
+  labels:
+    app: {{ awx_instance_name }}
+    environment: "{{ awx_instance_title | lower | replace(' ', '-') }}"
 spec:
   service_type: ClusterIP
   ingress_type: none
 
-  # Display name shown in the AWX web UI header
+  # Display name shown in AWX web UI — set via vars.yml
   task_args:
-    - AWX_DEPLOYMENT_NAME=AWX UAT   # ← change to "AWX PROD" for production
+    - AWX_DEPLOYMENT_NAME={{ awx_instance_title }}
 
   admin_user: admin
   admin_password_secret: awx-admin-password

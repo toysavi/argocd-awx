@@ -25,13 +25,6 @@
     dest: /tmp/awx-tls.key
     mode: '0600'
 
-- name: Create PersistentVolume for AWX projects
-  ansible.builtin.template:
-    src: awx-pv.yml.j2      # ← Jinja2 here, rendered by Ansible
-    dest: /tmp/awx-pv.yml
-    
-- name: kubectl apply PV
-  ansible.builtin.shell: kubectl apply -f /tmp/awx-pv.yml
 - name: Create AWX TLS secret
   ansible.builtin.shell: |
     kubectl create secret tls awx-tls-secret \
@@ -62,6 +55,34 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
   no_log: true
+
+# --- Render AWX instance CR and commit to repo ---
+- name: Render AWX instance manifest from template
+  ansible.builtin.template:
+    src: awx-instance.yml.j2
+    dest: /tmp/awx-instance-rendered.yml
+    mode: '0644'
+
+- name: Show rendered AWX instance
+  ansible.builtin.shell: cat /tmp/awx-instance-rendered.yml
+  register: rendered_instance
+  changed_when: false
+
+- ansible.builtin.debug:
+    msg: "{{ rendered_instance.stdout_lines }}"
+
+- name: Apply AWX instance CR directly (pre-create before ArgoCD sync)
+  ansible.builtin.shell: |
+    kubectl apply -f /tmp/awx-instance-rendered.yml
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  changed_when: false
+  ignore_errors: true
+
+- name: Remove temp instance file
+  ansible.builtin.file:
+    path: /tmp/awx-instance-rendered.yml
+    state: absent
 
 # --- Local storage dir ---
 - name: Create AWX projects directory

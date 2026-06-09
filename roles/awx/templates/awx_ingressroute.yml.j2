@@ -1,0 +1,16 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: awx-server-tls
+  namespace: {{ awx_namespace }}
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - kind: Rule
+      match: Host(`{{ awx_fqdn }}`)
+      services:
+        - name: {{ awx_instance_name }}-service
+          port: 80
+  tls:
+    secretName: awx-tls-secret
