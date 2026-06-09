@@ -190,7 +190,7 @@
 
 - name: Verify nodes are ready
   ansible.builtin.shell: |
-    kubectl get nodes --no-headers | grep -v "Ready"
+    kubectl get nodes --no-headers | awk '{print $2}' | grep -v "^Ready$" || true
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   register: not_ready
@@ -198,6 +198,16 @@
   delay: 15
   until: not_ready.stdout == ""
   changed_when: false
+
+- name: Show node status
+  ansible.builtin.shell: kubectl get nodes -o wide
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: node_status
+  changed_when: false
+
+- ansible.builtin.debug:
+    msg: "{{ node_status.stdout_lines }}" 
 
 - name: Create local storage directory
   ansible.builtin.file:
