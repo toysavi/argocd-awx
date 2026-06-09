@@ -192,7 +192,7 @@
 
 - name: Wait for AWX web deployment to be ready
   ansible.builtin.shell: |
-    kubectl get deployment awx-web -n {{ awx_namespace }} \
+    kubectl get deployment {{ awx_instance_name }}-web -n {{ awx_namespace }} \
       --no-headers 2>/dev/null | awk '{print $2}'
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
