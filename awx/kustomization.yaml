@@ -7,3 +7,10 @@ resources:
   - github.com/ansible/awx-operator/config/default?ref=2.19.1
   - awx-instance.yaml
   - awx-pv.yaml
+
+# Fix: gcr.io/kubebuilder/kube-rbac-proxy was removed from GCR
+# Patch to use the working mirror on quay.io
+images:
+  - name: gcr.io/kubebuilder/kube-rbac-proxy
+    newName: quay.io/brancz/kube-rbac-proxy
+    newTag: v0.15.0

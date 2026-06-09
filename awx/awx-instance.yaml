@@ -7,6 +7,7 @@ metadata:
 spec:
   service_type: ClusterIP
   ingress_type: none
+
   admin_user: admin
   admin_password_secret: awx-admin-password
 
