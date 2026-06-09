@@ -32,7 +32,7 @@ awx_admin_password:     "Ch@ngeMe456!"
 # MODE A: Helm (default, easiest upgrades — just change version)
 awx_use_git:            false
 awx_helm_repo:          "https://ansible.github.io/awx-operator/"
-awx_chart_version:      ""          # "" = latest, or pin e.g. "2.19.1"
+awx_chart_version:      "2.19.1"    # pin to avoid broken kube-rbac-proxy; "" = latest
 
 # MODE B: Git repo (kustomize) — set awx_use_git: true
 # awx_use_git:          true

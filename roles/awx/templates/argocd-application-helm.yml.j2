@@ -12,6 +12,13 @@ spec:
     helm:
       releaseName: awx-operator
       values: |
+        # Pin kube-rbac-proxy to working mirror image
+        # gcr.io/kubebuilder/kube-rbac-proxy was removed from GCR
+        kubeRbacProxy:
+          image:
+            repository: quay.io/brancz/kube-rbac-proxy
+            tag: v0.15.0
+
         AWX:
           enabled: true
           name: awx

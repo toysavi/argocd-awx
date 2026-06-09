@@ -1,0 +1,85 @@
+---
+# =============================================================
+# Fix kube-rbac-proxy ImagePullBackOff
+# gcr.io/kubebuilder/kube-rbac-proxy:v0.15.0 is no longer available
+# This playbook patches it to use the working mirror image
+# Usage: ansible-playbook -i inventory/hosts.ini playbooks/fix_rbac_proxy.yml
+# =============================================================
+- name: Fix kube-rbac-proxy image
+  hosts: k3s_nodes
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+
+  tasks:
+
+    - name: Patch kube-rbac-proxy to use gcr.io mirror (quay.io)
+      ansible.builtin.shell: |
+        kubectl patch deployment awx-operator-controller-manager \
+          -n {{ awx_namespace }} \
+          --type=json \
+          -p='[{
+            "op": "replace",
+            "path": "/spec/template/spec/containers/0/image",
+            "value": "quay.io/brancz/kube-rbac-proxy:v0.15.0"
+          }]'
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: patch_result
+      changed_when: true
+
+    - ansible.builtin.debug:
+        msg: "{{ patch_result.stdout }}"
+
+    - name: Wait for rollout to complete
+      ansible.builtin.shell: |
+        kubectl rollout status deployment/awx-operator-controller-manager \
+          -n {{ awx_namespace }} --timeout=120s
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      changed_when: false
+
+    - name: Verify pod is running
+      ansible.builtin.shell: |
+        kubectl get pods -n {{ awx_namespace }} -l control-plane=controller-manager
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: pod_status
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ pod_status.stdout_lines }}"
+
+    - name: Wait for AWX CR to be created by operator (up to 5 min)
+      ansible.builtin.shell: |
+        kubectl get awx awx -n {{ awx_namespace }} --no-headers 2>/dev/null || echo "not yet"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: awx_cr
+      retries: 10
+      delay: 30
+      until: "'not yet' not in awx_cr.stdout"
+      changed_when: false
+
+    - name: Check AWX CR status
+      ansible.builtin.shell: |
+        kubectl get awx -n {{ awx_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: awx_cr_status
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ awx_cr_status.stdout_lines }}"
+
+    - name: Check all pods in AWX namespace
+      ansible.builtin.shell: |
+        kubectl get pods -n {{ awx_namespace }}
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: all_pods
+      changed_when: false
+
+    - ansible.builtin.debug:
+        msg: "{{ all_pods.stdout_lines }}"
