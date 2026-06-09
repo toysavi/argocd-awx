@@ -149,23 +149,43 @@
   args:
     creates: /usr/local/bin/helm
 
-- name: Install Traefik via Helm (with Kubernetes provider)
+- name: Write Traefik Helm values file
+  ansible.builtin.copy:
+    dest: /tmp/traefik-values.yaml
+    mode: '0644'
+    content: |
+      service:
+        type: LoadBalancer
+        spec:
+          externalIPs:
+            - {{ node_ip }}
+      ports:
+        web:
+          redirectTo:
+            port: websecure
+        websecure:
+          port: 443
+          expose:
+            default: true
+
+- name: Install Traefik via Helm
   ansible.builtin.shell: |
     helm repo add traefik https://helm.traefik.io/traefik
     helm repo update
     helm upgrade --install traefik traefik/traefik \
       --namespace kube-system \
-      --set service.type=LoadBalancer \
-      --set ports.web.redirectTo.port=websecure \
-      --set ports.websecure.port=443 \
-      --set ports.websecure.expose.default=true \
-      --set "service.spec.externalIPs={{{ node_ip }}}" \
+      --values /tmp/traefik-values.yaml \
       --kubeconfig /etc/rancher/k3s/k3s.yaml \
       --wait --timeout 120s
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   register: traefik_install
   changed_when: "'deployed' in traefik_install.stdout or 'upgraded' in traefik_install.stdout"
+
+- name: Remove temp Traefik values file
+  ansible.builtin.file:
+    path: /tmp/traefik-values.yaml
+    state: absent
 
 - name: Verify nodes are ready
   ansible.builtin.shell: |
