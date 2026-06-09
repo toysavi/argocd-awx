@@ -10,6 +10,6 @@ spec:
     - ReadWriteOnce
   storageClassName: local-path
   hostPath:
-    path: /data/storage/awx-projects
+    path: {{ local_storage_path }}/awx-projects
     type: DirectoryOrCreate
   persistentVolumeReclaimPolicy: Retain

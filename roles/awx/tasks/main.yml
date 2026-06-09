@@ -25,6 +25,13 @@
     dest: /tmp/awx-tls.key
     mode: '0600'
 
+- name: Create PersistentVolume for AWX projects
+  ansible.builtin.template:
+    src: awx-pv.yml.j2      # ← Jinja2 here, rendered by Ansible
+    dest: /tmp/awx-pv.yml
+    
+- name: kubectl apply PV
+  ansible.builtin.shell: kubectl apply -f /tmp/awx-pv.yml
 - name: Create AWX TLS secret
   ansible.builtin.shell: |
     kubectl create secret tls awx-tls-secret \
