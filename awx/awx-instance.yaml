@@ -10,7 +10,7 @@ spec:
 
   # Display name shown in the AWX web UI header
   task_args:
-    - AWX_DEPLOYMENT_NAME="AWX UAT"   # ← change to "AWX PROD" for production
+    - AWX_DEPLOYMENT_NAME="AWX_UAT"   # ← change to "AWX PROD" for production
 
   admin_user: admin
   admin_password_secret: awx-admin-password
