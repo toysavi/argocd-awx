@@ -10,7 +10,7 @@ spec:
     - kind: Rule
       match: Host(`{{ awx_fqdn }}`)
       services:
-        - name: awx-service
+        - name: {{ awx_instance_name }}-service
           port: 80
   tls:
     secretName: awx-tls-secret
