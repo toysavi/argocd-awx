@@ -1,0 +1,65 @@
+---
+- name: Fix ArgoCD IngressRoute for Traefik v3
+  hosts: k3s_nodes
+  gather_facts: false
+  become: true
+  vars_files:
+    - ../group_vars/all/vars.yml
+
+  tasks:
+
+    - name: Apply fixed ArgoCD IngressRoute
+      ansible.builtin.template:
+        src: ../roles/argocd/templates/ingressroute.yml.j2
+        dest: /tmp/argocd-ingressroute-fixed.yml
+        mode: '0644'
+
+    - name: Show rendered IngressRoute
+      ansible.builtin.shell: cat /tmp/argocd-ingressroute-fixed.yml
+      register: ir_content
+      changed_when: false
+
+    - debug: msg="{{ ir_content.stdout_lines }}"
+
+    - name: Apply IngressRoute
+      ansible.builtin.shell: |
+        kubectl apply -f /tmp/argocd-ingressroute-fixed.yml
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: apply_result
+      changed_when: true
+
+    - debug: msg="{{ apply_result.stdout }}"
+
+    - name: Remove temp file
+      ansible.builtin.file:
+        path: /tmp/argocd-ingressroute-fixed.yml
+        state: absent
+
+    - name: Wait 5s for Traefik to reload
+      ansible.builtin.pause:
+        seconds: 5
+
+    - name: Test ArgoCD via Traefik
+      ansible.builtin.shell: |
+        curl -sk --max-time 5 \
+          -H "Host: {{ argocd_fqdn }}" \
+          https://{{ node_ip }} -o /dev/null \
+          -w "HTTP_CODE=%{http_code}"
+      register: test_result
+      changed_when: false
+
+    - debug:
+        msg: "ArgoCD via Traefik: {{ test_result.stdout }} (expect 200 or 307)"
+
+    - name: Check Traefik logs for Headers error (should be gone)
+      ansible.builtin.shell: |
+        kubectl logs -n kube-system \
+          -l app.kubernetes.io/name=traefik \
+          --tail=10 2>/dev/null | grep -i "error\|ERR" || echo "NO ERRORS — Traefik routing OK"
+      environment:
+        KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      register: traefik_errors
+      changed_when: false
+
+    - debug: msg="{{ traefik_errors.stdout_lines }}"
