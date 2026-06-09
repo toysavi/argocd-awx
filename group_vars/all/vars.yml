@@ -4,35 +4,43 @@
 # =============================================================
 
 # --- Node ---
-node_ip: "192.168.1.100"           # Your server IP
+# Even for localhost deploys, set this to the real server IP (not 127.0.0.1)
+# Used for: k3s --node-ip, Traefik externalIPs, k3s TLS SAN
+node_ip: "192.168.1.100"           # ← change to this server's actual IP
 
 # --- Storage ---
-local_storage_path: "/data/storage" # Local path for PV storage
+local_storage_path: "/data/storage"
 
-# --- SSL Certificates ---
-# Place your cert/key files on the control node, set paths here
-ssl_cert_path: "/etc/ssl/certs/tls.crt"   # path on CONTROL node
-ssl_key_path:  "/etc/ssl/private/tls.key"  # path on CONTROL node
+# --- SSL Certificates (paths on THIS server) ---
+ssl_cert_path: "/etc/ssl/certs/tls.crt"
+ssl_key_path:  "/etc/ssl/private/tls.key"
 
 # --- ArgoCD ---
-argocd_fqdn:           "argocd.example.com"
-argocd_namespace:      "argocd"
-argocd_helm_repo:      "https://argoproj.github.io/argo-helm"
-argocd_chart_version:  ""          # "" = latest, or pin e.g. "7.7.0"
-argocd_admin_password: "Ch@ngeMe123!"   # plain-text; hashed at deploy time
+argocd_fqdn:            "argocd.example.com"
+argocd_namespace:       "argocd"
+argocd_helm_repo:       "https://argoproj.github.io/argo-helm"
+argocd_chart_version:   ""          # "" = latest, or pin e.g. "7.7.0"
+argocd_admin_password:  "Ch@ngeMe123!"
 
 # --- AWX ---
-awx_fqdn:              "awx.example.com"
-awx_namespace:         "awx"
-# awx_helm_repo:         "https://ansible.github.io/awx-operator/"
-awx_repo_url:          "https://github.com/your-repo/argocd-awx.git"
-awx_repo_path:         "awx"
-awx_chart_version:     ""          # "" = latest, or pin e.g. "2.19.1"
-awx_admin_password:    "Ch@ngeMe456!"
+awx_fqdn:               "awx.example.com"
+awx_namespace:          "awx"
+awx_admin_password:     "Ch@ngeMe456!"
+
+# AWX source mode — choose ONE:
+# ---------------------------------------------------------------
+# MODE A: Helm (default, easiest upgrades — just change version)
+awx_use_git:            false
+awx_helm_repo:          "https://ansible.github.io/awx-operator/"
+awx_chart_version:      ""          # "" = latest, or pin e.g. "2.19.1"
+
+# MODE B: Git repo (kustomize) — set awx_use_git: true
+# awx_use_git:          true
+# awx_repo_url:         "https://github.com/your-org/your-gitops-repo.git"
+# awx_repo_path:        "awx"               # folder inside the repo
+# awx_repo_revision:    "main"              # branch/tag/commit
+# ---------------------------------------------------------------
 
 # --- k3s ---
-k3s_version:           "stable"    # or e.g. "v1.31.0+k3s1"
-k3s_data_dir:          "/var/lib/rancher/k3s"
-
-# --- Traefik (built-in with k3s) ---
-traefik_dashboard_enabled: false
+k3s_version:            "stable"
+k3s_data_dir:           "/var/lib/rancher/k3s"

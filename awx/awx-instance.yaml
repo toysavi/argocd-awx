@@ -1,0 +1,33 @@
+---
+apiVersion: awx.ansible.com/v1beta1
+kind: AWX
+metadata:
+  name: awx
+  namespace: awx
+spec:
+  service_type: ClusterIP
+  ingress_type: none
+  admin_user: admin
+  admin_password_secret: awx-admin-password
+
+  projects_persistence: true
+  projects_existing_claim: ""
+  projects_storage_size: 8Gi
+  projects_storage_access_mode: ReadWriteOnce
+  projects_storage_class: local-path
+
+  web_resource_requirements:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+
+  task_resource_requirements:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: 2000m
+      memory: 4Gi

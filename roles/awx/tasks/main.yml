@@ -1,7 +1,9 @@
-# =============================================================
-# Phase 3: Deploy AWX via ArgoCD Application (FIXED)
-# Uses Git repo (NOT Helm repo) — correct for AWX Operator
-# =============================================================
+---
+# ============================================================
+# Phase 3: Deploy AWX — two modes controlled by vars.yml:
+#   Mode A (default): Helm repo  — awx_use_git: false
+#   Mode B (GitOps) : Git repo   — awx_use_git: true
+# ============================================================
 
 - name: Create AWX namespace
   ansible.builtin.shell: |
@@ -10,37 +12,39 @@
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
+# --- TLS Secret ---
+- name: Write cert to temp file
+  ansible.builtin.copy:
+    content: "{{ lookup('file', ssl_cert_path) }}"
+    dest: /tmp/awx-tls.crt
+    mode: '0644'
 
-# -----------------------------
-# TLS SECRET
-# -----------------------------
-- name: Read SSL certificate from control node
-  ansible.builtin.slurp:
-    src: "{{ ssl_cert_path }}"
-  register: ssl_cert_content
-  delegate_to: localhost
-
-- name: Read SSL key from control node
-  ansible.builtin.slurp:
-    src: "{{ ssl_key_path }}"
-  register: ssl_key_content
-  delegate_to: localhost
+- name: Write key to temp file
+  ansible.builtin.copy:
+    content: "{{ lookup('file', ssl_key_path) }}"
+    dest: /tmp/awx-tls.key
+    mode: '0600'
 
 - name: Create AWX TLS secret
   ansible.builtin.shell: |
     kubectl create secret tls awx-tls-secret \
-      --cert=<(echo "{{ ssl_cert_content.content | b64decode }}") \
-      --key=<(echo "{{ ssl_key_content.content | b64decode }}") \
+      --cert=/tmp/awx-tls.crt \
+      --key=/tmp/awx-tls.key \
       --namespace={{ awx_namespace }} \
       --dry-run=client -o yaml | kubectl apply -f -
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
+- name: Remove temp cert files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /tmp/awx-tls.crt
+    - /tmp/awx-tls.key
 
-# -----------------------------
-# AWX ADMIN SECRET
-# -----------------------------
+# --- Admin password secret ---
 - name: Create AWX admin password secret
   ansible.builtin.shell: |
     kubectl create secret generic awx-admin-password \
@@ -49,116 +53,149 @@
       --dry-run=client -o yaml | kubectl apply -f -
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  no_log: true
   changed_when: false
+  no_log: true
 
-
-# -----------------------------
-# PV FOR PROJECTS
-# -----------------------------
+# --- Local storage dir ---
 - name: Create AWX projects directory
   ansible.builtin.file:
     path: "{{ local_storage_path }}/awx-projects"
     state: directory
     mode: '0755'
 
-- name: Create PersistentVolume for AWX projects
+# =============================================================
+# MODE A: Helm repo source (default — easy upgrades)
+# =============================================================
+- name: "[Helm] Add AWX Operator Helm repo"
   ansible.builtin.shell: |
-    kubectl apply -f - <<EOF
-    apiVersion: v1
-    kind: PersistentVolume
-    metadata:
-      name: awx-projects-pv
-    spec:
-      capacity:
-        storage: 8Gi
-      accessModes:
-        - ReadWriteOnce
-      storageClassName: local-storage
-      hostPath:
-        path: {{ local_storage_path }}/awx-projects
-        type: DirectoryOrCreate
-      persistentVolumeReclaimPolicy: Retain
-    EOF
+    helm repo add awx-operator {{ awx_helm_repo }}
+    helm repo update
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
+  when: not awx_use_git | default(false)
 
+- name: "[Helm] Render ArgoCD Application from template"
+  ansible.builtin.template:
+    src: argocd-application-helm.yml.j2
+    dest: /tmp/awx-argocd-app.yml
+    mode: '0644'
+  when: not awx_use_git | default(false)
 
-# -----------------------------
-# FIXED ARGOCD APPLICATION (IMPORTANT PART)
-# -----------------------------
-- name: Create AWX ArgoCD Application
-  ansible.builtin.shell: |
-    kubectl apply -f - <<EOF
-    apiVersion: argoproj.io/v1alpha1
-    kind: Application
-    metadata:
-      name: awx
-      namespace: {{ argocd_namespace }}
-    spec:
-      project: default
-      source:
-        repoURL: {{ awx_repo_url }}
-        targetRevision: main
-        path: {{ awx_repo_path }}
-      destination:
-        server: https://kubernetes.default.svc
-        namespace: {{ awx_namespace }}
-      syncPolicy:
-        automated:
-          prune: true
-          selfHeal: true
-        syncOptions:
-          - CreateNamespace=false
-    EOF
-  environment:
-    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+# =============================================================
+# MODE B: Git repo source (kustomize-based)
+# =============================================================
+- name: "[Git] Render ArgoCD Application from template"
+  ansible.builtin.template:
+    src: argocd-application-git.yml.j2
+    dest: /tmp/awx-argocd-app.yml
+    mode: '0644'
+  when: awx_use_git | default(false)
+
+# =============================================================
+# APPLY — same for both modes
+# =============================================================
+- name: Show rendered ArgoCD Application
+  ansible.builtin.shell: cat /tmp/awx-argocd-app.yml
+  register: rendered_app
   changed_when: false
 
+- ansible.builtin.debug:
+    msg: "{{ rendered_app.stdout_lines }}"
 
-# -----------------------------
-# WAIT FOR OPERATOR + AWX
-# -----------------------------
-- name: Wait AWX operator ready
+- name: Apply ArgoCD Application
   ansible.builtin.shell: |
-    kubectl get pods -n {{ awx_namespace }} | grep awx || true
+    kubectl apply -f /tmp/awx-argocd-app.yml
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: apply_result
+  changed_when: true
+
+- ansible.builtin.debug:
+    msg: "{{ apply_result.stdout_lines }}"
+
+- name: Remove temp Application file
+  ansible.builtin.file:
+    path: /tmp/awx-argocd-app.yml
+    state: absent
+
+# --- Wait for ArgoCD to sync ---
+- name: Pause 40s for ArgoCD to start syncing
+  ansible.builtin.pause:
+    seconds: 40
+
+- name: Check ArgoCD Application status
+  ansible.builtin.shell: |
+    kubectl get application awx-operator -n {{ argocd_namespace }} \
+      -o jsonpath='sync={.status.sync.status} health={.status.health.status}' 2>/dev/null \
+    || kubectl get application awx -n {{ argocd_namespace }} \
+      -o jsonpath='sync={.status.sync.status} health={.status.health.status}' 2>/dev/null \
+    || echo "Application not found yet"
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: sync_status
   changed_when: false
 
-- name: Wait AWX deployment
+- ansible.builtin.debug:
+    msg: "ArgoCD sync status: {{ sync_status.stdout }}"
+
+- name: Check what is running in AWX namespace
   ansible.builtin.shell: |
-    kubectl wait --for=condition=available deployment \
-      --all -n {{ awx_namespace }} --timeout=600s
+    kubectl get all -n {{ awx_namespace }}
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
-  retries: 10
+  register: awx_all
+  changed_when: false
+
+- ansible.builtin.debug:
+    msg: "{{ awx_all.stdout_lines }}"
+
+- name: Wait for AWX operator deployment to be ready
+  ansible.builtin.shell: |
+    kubectl get deployment awx-operator-controller-manager \
+      -n {{ awx_namespace }} --no-headers 2>/dev/null | awk '{print $2}'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: operator_ready
+  retries: 20
+  delay: 30
+  until: operator_ready.stdout == "1/1"
+  changed_when: false
+
+- name: Wait for AWX web deployment to be ready
+  ansible.builtin.shell: |
+    kubectl get deployment awx-web -n {{ awx_namespace }} \
+      --no-headers 2>/dev/null | awk '{print $2}'
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  register: awx_web_ready
+  retries: 30
   delay: 60
-  register: awx_ready
-  until: awx_ready.rc == 0
+  until: awx_web_ready.stdout == "1/1"
   changed_when: false
 
+# --- Traefik IngressRoute ---
+- name: Render AWX IngressRoute
+  ansible.builtin.template:
+    src: ingressroute.yml.j2
+    dest: /tmp/awx-ingressroute.yml
+    mode: '0644'
 
-# -----------------------------
-# TRAEFIK
-# -----------------------------
-- name: Apply AWX Traefik IngressRoute
+- name: Apply AWX IngressRoute
   ansible.builtin.shell: |
-    kubectl apply -f - <<'EOF'
-    {{ lookup('template', 'ingressroute.yml.j2') }}
-    EOF
+    kubectl apply -f /tmp/awx-ingressroute.yml
   environment:
     KUBECONFIG: /etc/rancher/k3s/k3s.yaml
   changed_when: false
 
+- name: Remove temp IngressRoute file
+  ansible.builtin.file:
+    path: /tmp/awx-ingressroute.yml
+    state: absent
 
-# -----------------------------
-# OUTPUT
-# -----------------------------
 - name: Print AWX access info
   ansible.builtin.debug:
     msg:
-      - "AWX URL   : https://{{ awx_fqdn }}"
-      - "Username  : admin"
-      - "Password  : {{ awx_admin_password }}"
+      - "AWX URL  : https://{{ awx_fqdn }}"
+      - "Username : admin"
+      - "Password : (as set in vars.yml)"
