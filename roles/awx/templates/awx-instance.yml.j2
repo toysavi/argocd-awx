@@ -19,7 +19,7 @@ spec:
   admin_password_secret: awx-admin-password
 
   projects_persistence: true
-  projects_existing_claim: ""
+  projects_existing_claim: "{{ awx_instance_name }}-projects-claim"
   projects_storage_size: 8Gi
   projects_storage_access_mode: ReadWriteOnce
   projects_storage_class: local-path
